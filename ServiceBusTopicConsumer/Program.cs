@@ -17,12 +17,6 @@ namespace ServiceBusTopicConsumer
             var producer = CreateTopicClient();
             Console.WriteLine("Enter messages to process:");
 
-            //client.OnMessage(message =>
-            //{
-            //    var content = message.Properties["content"];
-            //    Console.WriteLine($"=> {content}");
-            //}, new OnMessageOptions {AutoComplete = false});
-
             try
             {
                 while (true)
@@ -39,7 +33,14 @@ namespace ServiceBusTopicConsumer
                         break;
                     }
 
-                    MatchWithTopicItem(line, client, producer);
+                    if (MatchWithTopicItem(line, client, producer))
+                    {
+                        Console.WriteLine("Found a matching message");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Could not find a matching message");
+                    }
                 }
             }
             finally
@@ -51,13 +52,14 @@ namespace ServiceBusTopicConsumer
 
         private static bool ShouldQuit(string input) => "quit".Equals(input, StringComparison.OrdinalIgnoreCase);
 
-        private static void MatchWithTopicItem(string input, SubscriptionClient client, TopicClient producer)
+        private static bool MatchWithTopicItem(string input, SubscriptionClient client, TopicClient producer)
         {
             var visitedMessages = new List<string>();
+            var result = false;
 
             while (true)
             {
-                var message = client.Receive();
+                var message = client.Receive(TimeSpan.FromSeconds(5));
                 if (message == null)
                 {
                     break;
@@ -65,20 +67,29 @@ namespace ServiceBusTopicConsumer
 
                 var content = (string)message.Properties["content"];
 
-                if (!content.Equals(input))
+                if (visitedMessages.Contains(content))
+                {
+                    message.Abandon();
+                    break;
+                }
+
+                if (content.Equals(input))
+                {
+                    result = true;
+                }
+                else
                 {
                     producer.Send(message.Clone());
                 }
 
-                if (visitedMessages.Contains(content))
-                {
-                    break;
-                }
+                message.Complete();
 
                 visitedMessages.Add(content);
             }
-        }
 
+            return result;
+        }
+        
         private static SubscriptionClient CreateSubscriptionClient()
         {
             var connectionString = CloudConfigurationManager.GetSetting("Microsoft.ServiceBus.ConnectionString");
@@ -94,7 +105,7 @@ namespace ServiceBusTopicConsumer
                 namespaceManager.CreateSubscription(TopicName, SubscriptionName);
             }
 
-            return SubscriptionClient.CreateFromConnectionString(connectionString, TopicName, SubscriptionName, ReceiveMode.ReceiveAndDelete);
+            return SubscriptionClient.CreateFromConnectionString(connectionString, TopicName, SubscriptionName, ReceiveMode.PeekLock);
         }
 
         private static TopicClient CreateTopicClient()
